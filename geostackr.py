@@ -13,6 +13,7 @@ import yaml
 
 # Change these if you want to run it for a different series
 CONFIG = "config.yaml"
+SERIES = "series.yaml"
 FIG_PATH = "last_fig.png"
 SLEEP_INTERVAL_SECONDS = 300
 
@@ -24,8 +25,15 @@ except IOError:
     print(f"Could not load {CONFIG}. Make sure to rename it from {CONFIG}.example to {CONFIG}!")
     sys.exit(1)
 
+# Load series
+try:
+    series = yaml.load(open(SERIES), Loader=yaml.FullLoader)
+except IOError:
+    print(f"Could not load {SERIES}. Make sure to rename it from {SERIES}.example to {SERIES}!")
+    sys.exit(1)
+
 # Check if all keys required to be in config are there
-for required_in_config in ["defaults", "reddit_api", "series", "debug"]:
+for required_in_config in ["defaults", "reddit_api", "debug"]:
     if required_in_config not in config:
         print(f"'{required_in_config}' not defined in {CONFIG}")
         sys.exit(1)
@@ -34,8 +42,11 @@ for required_in_config in ["defaults", "reddit_api", "series", "debug"]:
 DEBUG_MODE = config['debug']
 DEFAULTS = config['defaults']
 REDDIT_API = config['reddit_api']
-SERIES_CONFIGS = config['series']
+SERIES_CONFIGS = series['series']
 
+
+
+# Check existing series
 print("=== Series found ===")
 for current_series_config in SERIES_CONFIGS:
     if 'regex' not in current_series_config:
@@ -313,6 +324,9 @@ def format_title(title: str):
     """Formats title by making it lowercase and removing all spaces"""
     return title.lower().replace(" ", "").strip()
 
+def format_title_to_tracking_title(title: str):
+    """Formats title and strips any special chars"""
+    return re.sub("[$%&@#\d+]","",format_title(title))
 
 def if_graph_needs_update(body: str, top: List[Tuple[str, UserScores]]) -> bool:
     """Returns True if at least a single score needs an update"""
@@ -328,6 +342,42 @@ def save_plots_and_get_urls(top_list: List[Tuple[str, UserScores]], series_index
         for plot_function in [save_line_plot, save_bar_plot]:
             formatted_urls.append(f"[{plot_function(top_list, series_index)}]({upload_to_imgur()})")
     return formatted_urls
+
+
+def add_new_series_to_yaml(series_name: str, series_user: str, series_format: str):
+    import pdb; pdb.set_trace()
+    series_dict = {
+                     "- title" : series_name,
+                     "author" : series_user,
+                     "regex" : series.format
+                  }
+    with open(SERIES_CONFIGS, 'r') as yamlfile:
+        cur = yaml.safe_load(yamlfile)
+        cur['series'].update(series_dict)
+    if cur:
+        with open(SERIES_CONFIGS, 'w') as yamlfile:
+            yaml.safe_dump(cur, yamlfile)
+
+def check_for_new_series_to_be_tracked():
+    print('checking for new series to be tracked...')
+    reddit = get_reddit_instance()
+    subreddit = reddit.subreddit('soulofdestiny')
+    #subreddit = reddit.subreddit('geoguessr') #TODO
+    submissionList = subreddit.new(limit = 100)
+
+    for submission in submissionList:
+        for topLevelComment in submission.comments:
+            try:
+                if topLevelComment.author.name == submission.author.name:
+                    if '!geostackr.track' in topLevelComment.body.lower():
+                        print("Found tracking request for submission " + submission.id)
+                        tracking_series = format_title_to_tracking_title(submission.title)
+                        tracking_user = submission.author.name
+                        tracking_format = DEFAULTS['regex'] #TODO
+                        add_new_series_to_yaml(tracking_series, tracking_user, tracking_format)
+            except AttributeError:
+                pass
+    
 
 
 def check_submissions_for_series(series_config):
@@ -386,11 +436,15 @@ def check_submissions_for_series(series_config):
 
 
 def handle_each_series():
+    # Check for new series to be tracked
+    check_for_new_series_to_be_tracked()
+
     for series_config in SERIES_CONFIGS:
         check_submissions_for_series(series_config)
 
 
 def message_author_about_error(exception):
+    return  #TODO
     import traceback
     subject = f"{get_iso_date()} Error with GeoStackr Bot"
     body = traceback.format_exc().replace("\n", "    \n")
